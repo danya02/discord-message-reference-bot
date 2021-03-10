@@ -1,13 +1,15 @@
 import os
 import re
+import asyncio
 
 import discord
+from discord.ext import commands
 from dotenv import load_dotenv
 
 load_dotenv()
 TOKEN = os.getenv('DISCORD_TOKEN')
 
-client = discord.Client()
+client = commands.Bot(command_prefix='!', help_command=None)
 
 DISCORD_LINK_REGEX = 'https:\/\/discord.com\/channels\/(\d+)\/(\d+)\/(\d+)'
 @client.event
@@ -17,6 +19,13 @@ async def on_ready():
 def acquire_reference(match):
     guild, channel, message = map(int, match)
     return discord.MessageReference(message_id=message, channel_id=channel, guild_id=guild)
+
+def get_jump_url(ref):
+    if (discord.version_info.major == 1 and discord.version_info.minor >= 7) or (discord.version_info.major > 1): # check for version 1.7
+        jump_url = ref.jump_url
+    else:
+        jump_url = f'https://discord.com/channels/{ref.guild_id}/{ref.channel_id}/{ref.message_id}'
+    return jump_url
 
 async def send_reference(message, ref, index, count):
     # NOTE: as of 2021-03-10, Discord does not allow cross-channel replies.
@@ -32,15 +41,11 @@ async def send_reference(message, ref, index, count):
         resolved = ref.resolved
         channel = client.get_channel(ref.channel_id)
         if channel is None:
-            if (discord.version_info.major == 1 and discord.version_info.minor >= 7) or (discord.version_info.major > 1): # check for version 1.7
-                jump_url = ref.jump_url
-            else:
-                jump_url = f'https://discord.com/channels/{ref.guild_id}/{ref.channel_id}/{ref.message_id}'
             embed = discord.Embed()
             embed.color = discord.Color.dark_red()
             embed.set_author(name='Unavailable channel', icon_url='https://cdn.discordapp.com/app-assets/818957516129173575/818981523726139392.png')
             embed.description = 'This message was sent in a channel that this bot cannot access. Perhaps it doesn\'t have the proper permissions or the message is in a server that this bot is not a part of.  [Jump to Message]('+jump_url+')'
-            embed.url = jump_url
+            embed.url = get_jump_url(ref)
             embed.timestamp = discord.Object(ref.message_id).created_at
             
             await message.channel.send(content=text, embed=embed)
@@ -51,11 +56,7 @@ async def send_reference(message, ref, index, count):
         embed = discord.Embed()
         if ref.message_id:
             embed.timestamp = discord.Object(ref.message_id).created_at
-        if (discord.version_info.major == 1 and discord.version_info.minor >= 7) or (discord.version_info.major > 1): # check for version 1.7
-            jump_url = ref.jump_url
-        else:
-            jump_url = f'https://discord.com/channels/{ref.guild_id}/{ref.channel_id}/{ref.message_id}'
-        embed.url = jump_url
+        embed.url = get_jump_url(ref)
         if isinstance(resolved, discord.DeletedReferencedMessage) or resolved is None:
             embed.color = discord.Color.red()
             embed.set_author(name='Unavailable message', icon_url='https://cdn.discordapp.com/app-assets/818957516129173575/818981523726139392.png')
@@ -82,12 +83,43 @@ async def send_reference(message, ref, index, count):
 
 @client.event
 async def on_message(message):
+    if message.author == client.user:
+        return
     text = message.content
     matches = re.findall(DISCORD_LINK_REGEX, text)
-    if len(matches) == 0: return
-    refs = [acquire_reference(match) for match in matches]
-    for index, ref in enumerate(refs):
-        await send_reference(message, ref, index, len(refs))
+    if len(matches) != 0:
+        refs = [acquire_reference(match) for match in matches]
+        for index, ref in enumerate(refs):
+            await send_reference(message, ref, index, len(refs))
+    await client.process_commands(message)
 
 
+@client.command(name='ref', aliases=['link'])
+async def get_link(ctx):
+    if ctx.message.reference is None:
+        await ctx.reply('You did not reference a message when you issued your command. Please retry with the "reply" feature of your Discord client.')
+        return
+    url = get_jump_url(ctx.message.reference)
+    try:
+        await ctx.message.delete()
+        del_fail = False
+    except:
+        del_fail = True
+
+    time_left = 60
+    time_step = 10
+
+    def get_text(time_left):
+        text = f'{ctx.author.mention}, your mentioned message has this URL: {url}.'
+        if del_fail:
+            text += '\nThere was an error deleting the command message. Please check this bot\'s permissions.'
+        text += f'\nThis message will be deleted in {time_left} seconds.'
+        return text
+    msg = await ctx.send(get_text(time_left))
+
+    while time_left > 0:
+        await asyncio.sleep(time_step)
+        time_left -= time_step
+        await msg.edit(content=get_text(time_left))
+    await msg.delete()
 client.run(TOKEN)
