@@ -4,12 +4,10 @@ import asyncio
 
 import discord
 from discord.ext import commands
-from dotenv import load_dotenv
 
-load_dotenv()
 TOKEN = os.getenv('DISCORD_TOKEN')
 
-client = commands.Bot(command_prefix='!', help_command=None)
+client = commands.Bot(command_prefix=os.getenv('COMMAND_PREFIX') or '!', help_command=None)
 
 DISCORD_LINK_REGEX = 'https:\/\/discord.com\/channels\/(\d+)\/(\d+)\/(\d+)'
 @client.event
@@ -122,4 +120,5 @@ async def get_link(ctx):
         time_left -= time_step
         await msg.edit(content=get_text(time_left))
     await msg.delete()
+
 client.run(TOKEN)
