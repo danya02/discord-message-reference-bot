@@ -25,6 +25,14 @@ def get_jump_url(ref):
         jump_url = f'https://discord.com/channels/{ref.guild_id}/{ref.channel_id}/{ref.message_id}'
     return jump_url
 
+def get_error_embed(title, desc):
+    embed = discord.Embed()
+    embed.color = discord.Color.dark_red()
+    embed.title = title
+    embed.set_thumbnail(url='https://cdn.discordapp.com/app-assets/818957516129173575/818981523726139392.png')
+    embed.description = desc
+    return embed
+
 async def send_reference(message, ref, index, count):
     # NOTE: as of 2021-03-10, Discord does not allow cross-channel replies.
     # Until this is implemented, an embed-based fallback is used for this.
@@ -39,28 +47,38 @@ async def send_reference(message, ref, index, count):
         resolved = ref.resolved
         channel = client.get_channel(ref.channel_id)
         if channel is None:
-            embed = discord.Embed()
-            embed.color = discord.Color.dark_red()
-            embed.set_author(name='Unavailable channel', icon_url='https://cdn.discordapp.com/app-assets/818957516129173575/818981523726139392.png')
-            embed.description = 'This message was sent in a channel that this bot cannot access. Perhaps it doesn\'t have the proper permissions or the message is in a server that this bot is not a part of.  [Jump to Message]('+jump_url+')'
-            embed.url = get_jump_url(ref)
+            jump_url = get_jump_url(ref)
+            embed = get_error_embed('Channel unavailable',
+                'This message was sent in a channel that this bot cannot access. Maybe I don\'t have enough permissions or this message is in a server I\'m not in. [Jump to Message]('+jump_url+')')
             embed.timestamp = discord.Object(ref.message_id).created_at
+            embed.url = jump_url
             
             await message.channel.send(content=text, embed=embed)
             return
 
-
-        resolved = await channel.fetch_message(ref.message_id)
+        try:
+            resolved = await channel.fetch_message(ref.message_id)
+        except discord.Forbidden:
+            jump_url = get_jump_url(ref)
+            embed = get_error_embed('Message unavailable',
+                'This message cannot be accessed by this bot. Maybe I don\'t have enough permissions or this message is in a server I\'m not in. [Jump to Message]('+jump_url+')')
+            embed.timestamp = discord.Object(ref.message_id).created_at
+            embed.url = jump_url
+            
+            await message.channel.send(content=text, embed=embed)
+            return
+            
         embed = discord.Embed()
         if ref.message_id:
             embed.timestamp = discord.Object(ref.message_id).created_at
         embed.url = get_jump_url(ref)
         if isinstance(resolved, discord.DeletedReferencedMessage) or resolved is None:
             embed.color = discord.Color.red()
-            embed.set_author(name='Unavailable message', icon_url='https://cdn.discordapp.com/app-assets/818957516129173575/818981523726139392.png')
+            embed.title='Unavailable message'
+            embed.set_thumbnail(url='https://cdn.discordapp.com/app-assets/818957516129173575/818981523726139392.png')
             # The above URL is for the 1024x1024 PNG render of https://discord.com/assets/289673858e06dfa2e0e3a7ee610c3a30.svg, the Discord client's SVG for :warning: emoji. 
-            # This is set as author because it is displayed at top of embed.
-            embed.description = 'This message could not be resolved at this time. This may mean that it has been deleted, or that the bot does not have the necessary permissions.'
+            # This is set as thumbnail because it is prominent in the embed.
+            embed.description = 'This message could not be resolved at this time. This may mean that it has been deleted, or that the bot does not have the necessary permissions. [Jump to Message]('+embed.url+')'
         else:
             embed.color = discord.Color.random()
             embed.set_author(name=resolved.author.display_name, icon_url=resolved.author.avatar_url)
@@ -76,7 +94,7 @@ async def send_reference(message, ref, index, count):
                     break
             if resolved.attachments:
                 embed.add_field(name='Attachment count', value=str(len(resolved.attachments)))
-        embed.description += ' [Jump to Message]('+jump_url+')'
+        embed.description += ' [Jump to Message]('+embed.url+')'
         await message.channel.send(content=text, embed=embed)
 
 @client.event
